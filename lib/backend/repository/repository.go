@@ -40,6 +40,7 @@ type RepositoryBackend struct {
 	hostsV2AuthTokens map[string]map[string]string
 	schema            string
 	imageManifests    map[types.ParsedDockerURL]v2Manifest
+	layersRef         map[types.ParsedDockerURL][][2]string
 }
 
 func NewRepositoryBackend(username string, password string, insecure bool) *RepositoryBackend {
@@ -50,10 +51,11 @@ func NewRepositoryBackend(username string, password string, insecure bool) *Repo
 		hostsV2Support:    make(map[string]bool),
 		hostsV2AuthTokens: make(map[string]map[string]string),
 		imageManifests:    make(map[types.ParsedDockerURL]v2Manifest),
+		layersRef:         make(map[types.ParsedDockerURL][][2]string),
 	}
 }
 
-func (rb *RepositoryBackend) GetImageInfo(url string) ([]string, *types.ParsedDockerURL, error) {
+func (rb *RepositoryBackend) GetImageInfo(url, tmpDir string) ([][2]string, *types.ParsedDockerURL, error) {
 	dockerURL, err := common.ParseDockerURL(url)
 	if err != nil {
 		return nil, nil, err
@@ -72,18 +74,20 @@ func (rb *RepositoryBackend) GetImageInfo(url string) ([]string, *types.ParsedDo
 	}
 
 	if supportsV2 {
-		return rb.getImageInfoV2(dockerURL)
+		return rb.getImageInfoV2(dockerURL, tmpDir)
 	} else {
-		URLSchema, supportsV1, err := rb.supportsRegistry(dockerURL.IndexURL, registryV1)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !supportsV1 {
-			return nil, nil, fmt.Errorf("registry doesn't support API v2 nor v1")
-		}
-		rb.schema = URLSchema + "://"
-		return rb.getImageInfoV1(dockerURL)
+		//URLSchema, supportsV1, err := rb.supportsRegistry(dockerURL.IndexURL, registryV1)
+		//if err != nil {
+		//return nil, nil, err
+		//}
+		//if !supportsV1 {
+		//return nil, nil, fmt.Errorf("registry doesn't support API v2 nor v1")
+		//}
+		//rb.schema = URLSchema + "://"
+		//return rb.getImageInfoV1(dockerURL)
 	}
+	// TODO(runcom): remove
+	return nil, nil, err
 }
 
 func (rb *RepositoryBackend) BuildACI(layerNumber int, layerID string, dockerURL *types.ParsedDockerURL, outputDir string, tmpBaseDir string, curPwl []string, compression common.Compression) (string, *schema.ImageManifest, error) {

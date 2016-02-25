@@ -24,7 +24,6 @@ import (
 	"github.com/appc/docker2aci/lib"
 	"github.com/appc/docker2aci/lib/common"
 	"github.com/appc/docker2aci/lib/util"
-
 	"github.com/appc/spec/aci"
 	"github.com/appc/spec/schema"
 )
@@ -77,7 +76,7 @@ func runDocker2ACI(arg string, flagNoSquash bool, flagImage string, flagDebug bo
 
 		aciLayerPaths, err = docker2aci.Convert(dockerURL, squash, ".", os.TempDir(), compression, username, password, flagInsecure)
 	} else {
-		aciLayerPaths, err = docker2aci.ConvertFile(flagImage, arg, squash, ".", os.TempDir(), compression)
+		//aciLayerPaths, err = docker2aci.ConvertFile(flagImage, arg, squash, ".", os.TempDir(), compression)
 	}
 	if err != nil {
 		return fmt.Errorf("conversion error: %v", err)

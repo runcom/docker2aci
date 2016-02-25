@@ -38,7 +38,7 @@ import (
 )
 
 type Docker2ACIBackend interface {
-	GetImageInfo(dockerUrl string) ([]string, *types.ParsedDockerURL, error)
+	GetImageInfo(dockerUrl, tmpDir string) ([][2]string, *types.ParsedDockerURL, error)
 	BuildACI(layerNumber int, layerID string, dockerURL *types.ParsedDockerURL, outputDir string, tmpBaseDir string, curPWl []string, compression common.Compression) (string, *schema.ImageManifest, error)
 }
 
@@ -75,7 +75,7 @@ func Convert(dockerURL string, squash bool, outputDir string, tmpDir string, com
 // It will use the temporary directory specified by tmpDir, or the default
 // temporary directory if tmpDir is "".
 // It returns the list of generated ACI paths.
-func ConvertFile(dockerURL string, filePath string, squash bool, outputDir string, tmpDir string, compression common.Compression) ([]string, error) {
+func ConvertFile(dockerURL string, filePath string, squash bool, outputDir string, tmpDir string, compression common.Compression) ([][2]string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("error opening file: %v", err)
@@ -83,7 +83,9 @@ func ConvertFile(dockerURL string, filePath string, squash bool, outputDir strin
 	defer f.Close()
 
 	fileBackend := file.NewFileBackend(f)
-	return convertReal(fileBackend, dockerURL, squash, outputDir, tmpDir, compression)
+	_ = fileBackend
+	//return convertReal(fileBackend, dockerURL, squash, outputDir, tmpDir, compression)
+	return nil, nil
 }
 
 // GetIndexName returns the docker index server from a docker URL.
@@ -100,25 +102,28 @@ func GetDockercfgAuth(indexServer string) (string, string, error) {
 
 func convertReal(backend Docker2ACIBackend, dockerURL string, squash bool, outputDir string, tmpDir string, compression common.Compression) ([]string, error) {
 	util.Debug("Getting image info...")
-	ancestry, parsedDockerURL, err := backend.GetImageInfo(dockerURL)
-	if err != nil {
-		return nil, err
-	}
 
 	layersOutputDir := outputDir
 	if squash {
-		layersOutputDir, err = ioutil.TempDir(tmpDir, "docker2aci-")
+		layersOutputDir, err := ioutil.TempDir(tmpDir, "docker2aci-")
 		if err != nil {
 			return nil, fmt.Errorf("error creating dir: %v", err)
 		}
 		defer os.RemoveAll(layersOutputDir)
 	}
 
+	ancestry, parsedDockerURL, err := backend.GetImageInfo(dockerURL, tmpDir)
+	if err != nil {
+		return nil, err
+	}
+
 	conversionStore := NewConversionStore()
 
-	var images acirenderer.Images
-	var aciLayerPaths []string
-	var curPwl []string
+	var (
+		images        acirenderer.Images
+		aciLayerPaths []string
+		curPwl        []string
+	)
 	for i := len(ancestry) - 1; i >= 0; i-- {
 		layerID := ancestry[i]
 
@@ -128,7 +133,7 @@ func convertReal(backend Docker2ACIBackend, dockerURL string, squash bool, outpu
 			layerCompression = common.NoCompression
 		}
 
-		aciPath, manifest, err := backend.BuildACI(i, layerID, parsedDockerURL, layersOutputDir, tmpDir, curPwl, layerCompression)
+		aciPath, manifest, err := backend.BuildACI(i, layerID[0], parsedDockerURL, layersOutputDir, tmpDir, curPwl, layerCompression)
 		if err != nil {
 			return nil, fmt.Errorf("error building layer: %v", err)
 		}

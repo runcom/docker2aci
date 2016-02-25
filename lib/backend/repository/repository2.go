@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/appc/docker2aci/lib/common"
@@ -53,20 +54,24 @@ type v2Manifest struct {
 	Signature []byte `json:"signature"`
 }
 
-func (rb *RepositoryBackend) getImageInfoV2(dockerURL *types.ParsedDockerURL) ([]string, *types.ParsedDockerURL, error) {
-	manifest, layers, err := rb.getManifestV2(dockerURL)
+func (rb *RepositoryBackend) getImageInfoV2(dockerURL *types.ParsedDockerURL, tmpDir string) ([][2]string, *types.ParsedDockerURL, error) {
+	manifest, layers, err := rb.getManifestV2(dockerURL, tmpDir)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	rb.layersRef[*dockerURL] = layers
 	rb.imageManifests[*dockerURL] = *manifest
 
+	// TODO(runcom)
+	// do not return layers, we can get them by dockerURL in docker2aci.go
 	return layers, dockerURL, nil
 }
 
 func (rb *RepositoryBackend) buildACIV2(layerNumber int, layerID string, dockerURL *types.ParsedDockerURL, outputDir string, tmpBaseDir string, curPwl []string, compression common.Compression) (string, *schema.ImageManifest, error) {
 	manifest := rb.imageManifests[*dockerURL]
 
+	// O(N) NO!!!
 	layerIndex, err := getLayerIndex(layerID, manifest)
 	if err != nil {
 		return "", nil, err
@@ -81,18 +86,23 @@ func (rb *RepositoryBackend) buildACIV2(layerNumber int, layerID string, dockerU
 		return "", nil, fmt.Errorf("error unmarshaling layer data: %v", err)
 	}
 
-	tmpDir, err := ioutil.TempDir(tmpBaseDir, "docker2aci-")
-	if err != nil {
-		return "", nil, fmt.Errorf("error creating dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// here
 
-	layerFile, err := rb.getLayerV2(layerID, dockerURL, tmpDir)
-	if err != nil {
-		return "", nil, fmt.Errorf("error getting the remote layer: %v", err)
-	}
-	defer layerFile.Close()
+	//layerFile, err := rb.getLayerV2(layerID, dockerURL, tmpDir)
+	//if err != nil {
+	//return "", nil, fmt.Errorf("error getting the remote layer: %v", err)
+	//}
+	//defer layerFile.Close()
+	// here
+	//
+	//fmt.Println(rb.layersRef[*dockerURL][layerIndex])
 
+	layerFile, err := os.Open(rb.layersRef[*dockerURL][layerIndex][1])
+	if err != nil {
+		return "", nil, err
+	}
+
+	// add layer id here
 	util.Debug("Generating layer ACI...")
 	aciPath, aciManifest, err := common.GenerateACI(layerNumber, layerData, dockerURL, outputDir, layerFile, curPwl, compression)
 	if err != nil {
@@ -102,7 +112,7 @@ func (rb *RepositoryBackend) buildACIV2(layerNumber int, layerID string, dockerU
 	return aciPath, aciManifest, nil
 }
 
-func (rb *RepositoryBackend) getManifestV2(dockerURL *types.ParsedDockerURL) (*v2Manifest, []string, error) {
+func (rb *RepositoryBackend) getManifestV2(dockerURL *types.ParsedDockerURL, tmpDir string) (*v2Manifest, [][2]string, error) {
 	url := rb.schema + path.Join(dockerURL.IndexURL, "v2", dockerURL.ImageName, "manifests", dockerURL.Tag)
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -148,11 +158,27 @@ func (rb *RepositoryBackend) getManifestV2(dockerURL *types.ParsedDockerURL) (*v
 
 	//TODO: verify signature here
 
-	layers := make([]string, len(manifest.FSLayers))
-
-	for i, layer := range manifest.FSLayers {
-		layers[i] = layer.BlobSum
+	tmpDirNew, err := ioutil.TempDir(tmpDir, "docker2aci-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("error creating dir: %v", err)
 	}
+	layers := make([][2]string, len(manifest.FSLayers))
+	var wg sync.WaitGroup
+	for i, layer := range manifest.FSLayers {
+		layers[i] = [2]string{}
+		layers[i][0] = layer.BlobSum
+
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			layerFile, err := rb.getLayerV2(layers[index][0], dockerURL, tmpDirNew)
+			if err != nil {
+				//return nil, nil, fmt.Errorf("error getting the remote layer: %v", err)
+			}
+			layers[index][1] = layerFile.Name()
+		}(i)
+	}
+	wg.Wait()
 
 	return manifest, layers, nil
 }
@@ -298,6 +324,8 @@ func (rb *RepositoryBackend) getLayerV2(layerID string, dockerURL *types.ParsedD
 	if err := layerFile.Sync(); err != nil {
 		return nil, err
 	}
+
+	layerFile.Close()
 
 	return layerFile, nil
 }
